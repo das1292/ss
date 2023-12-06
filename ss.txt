@@ -14,7 +14,6 @@ ArduCAM myCAM(OV7670, CS);
 
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);  // Pin RS, Enable, D4, D5, D6, D7
 
-// Pin czujnika ruchu (PIR)
 const int pirSensorPin = 2;
 bool motionDetected = false;
 
