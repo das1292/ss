@@ -1,0 +1,100 @@
+#include <Wire.h>
+#include <ArduCAM.h>
+#include <memorysaver.h>
+#include <SPI.h>
+#include <SoftwareSerial.h>
+#include <LiquidCrystal.h>
+
+const char *ssid = "nazwa";
+const char *password = "haslo";
+
+const char *serverIP = "192.168.1.100";
+
+ArduCAM myCAM(OV7670, CS);
+
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);  // Pin RS, Enable, D4, D5, D6, D7
+
+// Pin czujnika ruchu (PIR)
+const int pirSensorPin = 2;
+bool motionDetected = false;
+
+const int espRxPin = 10;  // Rx dla ESP8266, Tx dla Arduino
+const int espTxPin = 11;  // Tx dla ESP8266, Rx dla Arduino
+const int espResetPin = 12;  // Pin resetujący ESP8266
+SoftwareSerial espSerial(espRxPin, espTxPin);
+
+void setup() {
+  Serial.begin(115200);
+  myCAM.InitCAM();
+  myCAM.OV7670_set_JPEG_size(OV7670_320x240);
+
+  lcd.begin(16, 2);
+  lcd.print("Monitoring...");
+
+  pinMode(pirSensorPin, INPUT);
+
+  pinMode(espResetPin, OUTPUT);
+  digitalWrite(espResetPin, LOW);
+  delay(10);
+  digitalWrite(espResetPin, HIGH);
+
+  espSerial.begin(115200);
+  espSerial.println("AT");
+  delay(1000);
+
+  espSerial.println("AT+CWJAP=\"" + String(ssid) + "\",\"" + String(password) + "\"");
+  delay(2000);
+
+  Serial.println("Połączono z siecią WiFi");
+}
+
+void loop() {
+  motionDetected = digitalRead(pirSensorPin) == HIGH;
+
+  if (motionDetected) {
+    captureAndSendImage();
+  }
+
+  delay(500);
+}
+
+void captureAndSendImage() {
+  myCAM.clear_fifo_flag();
+  myCAM.start_capture();
+  while (!myCAM.get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK));
+
+  int total_length = myCAM.read_fifo_length();
+  uint8_t *image_buffer = (uint8_t *)malloc(total_length);
+  myCAM.CS_LOW();
+  myCAM.set_fifo_burst();
+
+  for (int i = 0; i < total_length; i++) {
+    image_buffer[i] = myCAM.read_fifo();
+  }
+
+  myCAM.CS_HIGH();
+
+  espSerial.println("AT+CIPSTART=\"TCP\",\"" + String(serverIP) + "\",80");
+  delay(2000);
+
+  espSerial.println("AT+CIPSEND=" + String(total_length + 50));
+  delay(1000);
+
+  espSerial.println("POST /upload_image HTTP/1.1");
+  espSerial.println("Host: " + String(serverIP));
+  espSerial.println("Content-Type: application/octet-stream");
+  espSerial.println("Content-Disposition: form-data; name=\"image\"; filename=\"image.jpg\"");
+  espSerial.println("Connection: close");
+  espSerial.println("Content-Length: " + String(total_length));
+  espSerial.println();
+
+  for (int i = 0; i < total_length; i++) {
+    espSerial.write(image_buffer[i]);
+  }
+  free(image_buffer);
+
+  Serial.println("Obraz przesłany poprawnie");
+
+  lcd.clear();
+  lcd.print("Ruch wykryty");
+}
